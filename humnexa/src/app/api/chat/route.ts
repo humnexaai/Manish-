@@ -33,18 +33,40 @@ function fallbackReply(lastUserMessage: string, modeId: string) {
     "You asked:",
     lastUserMessage,
     "",
-    "Set OPENAI_API_KEY (and optionally OPENAI_MODEL / OPENAI_BASE_URL) to enable real model responses.",
+    "Set GROQ_API_KEY (or OPENAI_API_KEY) to enable real model responses.",
   ].join("\n");
 }
 
+function getProviderConfig() {
+  const groqApiKey = process.env.GROQ_API_KEY?.trim();
+  const openAiApiKey = process.env.OPENAI_API_KEY?.trim();
+
+  if (groqApiKey) {
+    return {
+      provider: "groq" as const,
+      apiKey: groqApiKey,
+      model: process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b",
+      baseUrl: process.env.GROQ_BASE_URL?.trim() || "https://api.groq.com/openai/v1",
+    };
+  }
+
+  if (openAiApiKey) {
+    return {
+      provider: "openai" as const,
+      apiKey: openAiApiKey,
+      model: process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
+      baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
+    };
+  }
+
+  return null;
+}
+
 async function getModelReply(messages: ChatMessageInput[], modeId: string, webSearch: boolean) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
-  const baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-
   const lastUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content?.trim() ?? "";
+  const provider = getProviderConfig();
 
-  if (!apiKey) {
+  if (!provider) {
     return { reply: fallbackReply(lastUserMessage, modeId), usedFallback: true };
   }
 
@@ -57,14 +79,14 @@ async function getModelReply(messages: ChatMessageInput[], modeId: string, webSe
       : "Do not claim web browsing unless explicitly provided sources.",
   ].join(" ");
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+  const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${provider.apiKey}`,
     },
     body: JSON.stringify({
-      model,
+      model: provider.model,
       temperature: 0.6,
       messages: [{ role: "system", content: systemPrompt }, ...messages],
     }),

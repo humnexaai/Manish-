@@ -19,14 +19,19 @@ Create `.env.local`:
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 
-# Optional: AI model provider for /api/chat
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-4o-mini
-# Optional custom provider base URL (OpenAI-compatible)
+# Preferred: Groq (OpenAI-compatible API)
+GROQ_API_KEY=...
+GROQ_MODEL=openai/gpt-oss-120b
+# Optional override
+# GROQ_BASE_URL=https://api.groq.com/openai/v1
+
+# Alternative provider: OpenAI
+# OPENAI_API_KEY=...
+# OPENAI_MODEL=gpt-4o-mini
 # OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
-If `OPENAI_API_KEY` is missing, chat still works with a local fallback response.
+If no provider key is set, chat still works with a local fallback response.
 
 ## Current app state
 
