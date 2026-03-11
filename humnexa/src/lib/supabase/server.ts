@@ -3,10 +3,12 @@ import { cookies } from "next/headers";
 
 export async function createClient() {
   const cookieStore = cookies();
-  const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const supabaseUrl = envUrl?.startsWith("http") ? envUrl : "https://example.supabase.co";
-  const supabaseAnonKey = envKey && envKey !== "your_anon_key" ? envKey : "public-anon-key";
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+  }
 
   return createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {

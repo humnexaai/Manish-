@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { showToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
+import { signInWithGoogle } from "@/lib/supabase";
 
 function getPasswordStrength(password: string) {
   let score = 0;
@@ -66,14 +67,10 @@ export default function SignupPage() {
     }
   };
 
-  const signInWithGoogle = async () => {
+  const continueWithGoogle = async () => {
     try {
       setIsLoading(true);
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: `${window.location.origin}/chat` },
-      });
+      const { error } = await signInWithGoogle("/chat");
       if (error) throw error;
     } catch (error) {
       showToast({
@@ -94,7 +91,7 @@ export default function SignupPage() {
         <p className="mt-1 text-sm text-brand-text-secondary">Start your Hindi-first AI journey today.</p>
       </div>
 
-      <Button variant="outline" fullWidth isLoading={isLoading} onClick={signInWithGoogle}>
+      <Button variant="outline" fullWidth isLoading={isLoading} onClick={continueWithGoogle}>
         <span className="inline-flex items-center gap-2">
           <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.3-1.6 3.9-5.4 3.9-3.2 0-5.9-2.7-5.9-6s2.7-6 5.9-6c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.7 3.7 14.6 3 12 3 7 3 3 7 3 12s4 9 9 9c5.2 0 8.6-3.6 8.6-8.7 0-.6-.1-1-.2-1.4z" />

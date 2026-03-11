@@ -8,10 +8,8 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const supabaseUrl = envUrl?.startsWith("http") ? envUrl : "";
-  const supabaseAnonKey = envKey && envKey !== "your_anon_key" ? envKey : "";
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
 
   if (!supabaseUrl || !supabaseAnonKey) {
     return { response, session: null };
