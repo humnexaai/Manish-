@@ -39,3 +39,7 @@ If no provider key is set, chat still works with a local fallback response.
 - Protected app shell with chat and settings
 - Chat conversations/messages persisted to Supabase (best-effort)
 - `/api/chat` server route for model responses
+
+## Database bootstrap
+
+Run `humnexa-db-schema.sql` in Supabase SQL Editor to create the full baseline schema (29 tables + RLS + indexes + triggers).

@@ -15,7 +15,15 @@ export default async function ProtectedAppLayout({ children }: { children: React
     redirect("/login");
   }
 
-  const { data: profile } = await supabase.from("users").select("*").eq("id", authUser.id).single();
+  const profileSeed = {
+    id: authUser.id,
+    full_name: (authUser.user_metadata?.full_name as string | undefined) ?? null,
+    avatar_url: (authUser.user_metadata?.avatar_url as string | undefined) ?? null,
+    phone: authUser.phone ?? null,
+  };
+
+  await supabase.from("profiles").upsert(profileSeed, { onConflict: "id" }).select("id").maybeSingle();
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", authUser.id).maybeSingle();
 
   const user: User = {
     id: authUser.id,
