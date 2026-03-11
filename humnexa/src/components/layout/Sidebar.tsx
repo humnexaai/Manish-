@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pin, Plus, Settings } from "lucide-react";
 import { MODULES } from "@/lib/constants";
 import { iconMap } from "@/lib/icon-map";
+import { createClient } from "@/lib/supabase/client";
+import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
@@ -20,7 +23,7 @@ interface SidebarProps {
   onNewChat?: () => void;
 }
 
-interface DummyConversation {
+interface SidebarConversation {
   id: string;
   title: string;
   module: string;
@@ -28,17 +31,9 @@ interface DummyConversation {
   pinned?: boolean;
 }
 
-const dummyConversations: DummyConversation[] = [
-  { id: "1", title: "UPSC polity quick revision", module: "learn", updatedAt: new Date().toISOString(), pinned: true },
-  { id: "2", title: "Build finance dashboard in React", module: "code", updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString() },
-  { id: "3", title: "Summarize product PRD", module: "docs", updatedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString() },
-  { id: "4", title: "Analyze CSV with trends", module: "data", updatedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() },
-  { id: "5", title: "SaaS landing page copy ideas", module: "write", updatedAt: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString() },
-];
-
-function groupConversationByTime(items: DummyConversation[]) {
+function groupConversationByTime(items: SidebarConversation[]) {
   const now = Date.now();
-  const groups: Record<string, DummyConversation[]> = {
+  const groups: Record<string, SidebarConversation[]> = {
     Today: [],
     Yesterday: [],
     "Previous 7 Days": [],
@@ -58,12 +53,17 @@ function groupConversationByTime(items: DummyConversation[]) {
 }
 
 export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: SidebarProps) {
+  const pathname = usePathname();
+  const router = useRouter();
   const { sidebarOpen, sidebarWidth, toggleSidebar, isMobile } = useUIStore();
+  const { user } = useAuthStore();
   const [search, setSearch] = useState("");
   const [activeModule, setActiveModule] = useState("chat");
   const [menuConversation, setMenuConversation] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [conversations, setConversations] = useState<SidebarConversation[]>([]);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -82,11 +82,50 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
     return () => window.removeEventListener("click", closeContext);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const fetchConversations = async () => {
+      setIsLoadingConversations(true);
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("conversations")
+          .select("id,title,module,last_message_at,is_pinned,updated_at")
+          .order("last_message_at", { ascending: false })
+          .limit(100);
+
+        if (error) throw error;
+        if (cancelled) return;
+        setConversations(
+          (data ?? []).map((row) => ({
+            id: (row.id as string | undefined) ?? crypto.randomUUID(),
+            title: ((row.title as string | undefined) ?? "Untitled conversation").trim() || "Untitled conversation",
+            module: (row.module as string | undefined) ?? "chat",
+            updatedAt:
+              (row.last_message_at as string | undefined) ??
+              (row.updated_at as string | undefined) ??
+              new Date().toISOString(),
+            pinned: Boolean(row.is_pinned),
+          })),
+        );
+      } catch {
+        if (!cancelled) setConversations([]);
+      } finally {
+        if (!cancelled) setIsLoadingConversations(false);
+      }
+    };
+    void fetchConversations();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
   const filtered = useMemo(() => {
-    return dummyConversations
+    return conversations
+      .filter((item) => item.module === activeModule)
       .filter((item) => item.title.toLowerCase().includes(search.toLowerCase()))
       .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
-  }, [search]);
+  }, [activeModule, conversations, search]);
 
   const groups = groupConversationByTime(filtered);
   const visible = isMobile ? mobileOpen : true;
@@ -133,7 +172,10 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
           fullWidth={sidebarOpen}
           leftIcon={<Plus className="h-4 w-4" />}
           aria-label="Create new chat"
-          onClick={onNewChat}
+          onClick={() => {
+            onNewChat?.();
+            router.push("/chat");
+          }}
         >
           {sidebarOpen ? "New Chat" : ""}
         </Button>
@@ -150,7 +192,10 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
               <button
                 key={module.id}
                 type="button"
-                onClick={() => setActiveModule(module.id)}
+                onClick={() => {
+                  setActiveModule(module.id);
+                  if (module.phase === 1) router.push(module.route);
+                }}
                 className={cn(
                   "inline-flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40",
                   active
@@ -176,6 +221,11 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
+        {!isLoadingConversations && filtered.length === 0 ? (
+          <p className="px-2 py-3 text-xs text-brand-text-secondary">
+            {search ? "No matching conversations." : "No conversations yet. Start a new chat."}
+          </p>
+        ) : null}
         {Object.entries(groups).map(([label, items]) =>
           items.length ? (
             <div key={label} className="mb-3">
@@ -183,7 +233,10 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
               <div className="space-y-1">
                 {items.map((item) => {
                   const moduleIconName = MODULES.find((mod) => mod.id === item.module)?.icon ?? "MessageSquare";
+                  const moduleRoute = MODULES.find((mod) => mod.id === item.module)?.route ?? "/chat";
                   const ModuleIcon = iconMap[moduleIconName];
+                  const conversationHref = item.module === "chat" ? `/chat/${item.id}` : moduleRoute;
+                  const isActiveConversation = pathname === conversationHref;
                   return (
                     <div
                       key={item.id}
@@ -195,7 +248,13 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
                     >
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition hover:bg-brand-card-light focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:hover:bg-brand-card-dark"
+                        onClick={() => router.push(conversationHref)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40",
+                          isActiveConversation
+                            ? "bg-brand-primary/10"
+                            : "hover:bg-brand-card-light dark:hover:bg-brand-card-dark",
+                        )}
                       >
                         {ModuleIcon ? <ModuleIcon className="h-4 w-4 shrink-0 text-brand-text-secondary" /> : null}
                         {sidebarOpen ? (
@@ -246,11 +305,13 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
 
       <div className="border-t border-brand-border-light p-3 dark:border-brand-border-dark">
         <div className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
-          <Avatar size="sm" name="Humnexa User" status="online" />
+          <Avatar size="sm" name={user?.full_name ?? "Humnexa User"} status="online" />
           {sidebarOpen ? (
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-brand-text-light dark:text-brand-text-dark">Humnexa User</p>
-              <Badge text="Free" />
+              <p className="truncate text-sm font-medium text-brand-text-light dark:text-brand-text-dark">
+                {user?.full_name ?? user?.email ?? "Humnexa User"}
+              </p>
+              <Badge text={user?.plan ? user.plan.toUpperCase() : "FREE"} />
             </div>
           ) : null}
           {sidebarOpen ? (

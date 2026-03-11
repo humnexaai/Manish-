@@ -1,55 +1,36 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { ChatInput } from "@/components/chat/ChatInput";
-import type { Message } from "@/types";
 
 export default function ChatHomePage() {
   const router = useRouter();
-  const [messages, setMessages] = useState<Message[]>([]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ChatArea
-        messages={messages}
+        messages={[]}
         selectedModule="chat"
         onStarterClick={(prompt) => {
-          const firstMessage: Message = {
-            id: crypto.randomUUID(),
-            conversation_id: "temp",
-            role: "user",
-            content: prompt,
+          const conversationId = crypto.randomUUID();
+          const query = new URLSearchParams({
+            q: prompt,
             mode: "auto",
-            model: "default",
-            tokens_in: 0,
-            tokens_out: 0,
-            attachments: [],
-            citations: [],
-            created_at: new Date().toISOString(),
-          };
-          setMessages([firstMessage]);
+            web: "0",
+          }).toString();
+          router.push(`/chat/${conversationId}?${query}`);
         }}
       />
       <ChatInput
-        onSend={(content) => {
+        onSend={(content, options) => {
           const conversationId = crypto.randomUUID();
-          const firstMessage: Message = {
-            id: crypto.randomUUID(),
-            conversation_id: conversationId,
-            role: "user",
-            content,
-            mode: "auto",
-            model: "default",
-            tokens_in: 0,
-            tokens_out: 0,
-            attachments: [],
-            citations: [],
-            created_at: new Date().toISOString(),
-          };
-          setMessages([firstMessage]);
-          router.push(`/chat/${conversationId}`);
+          const query = new URLSearchParams({
+            q: content,
+            mode: options.modeId,
+            web: options.webSearch ? "1" : "0",
+          }).toString();
+          router.push(`/chat/${conversationId}?${query}`);
         }}
       />
     </div>
