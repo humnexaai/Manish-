@@ -11,9 +11,11 @@ import { cn } from "@/lib/utils";
 interface ChatAreaProps {
   messages: Message[];
   isTyping?: boolean;
+  streamingText?: string;
+  currentConversationId?: string | null;
   selectedModule?: string;
   onStarterClick?: (prompt: string) => void;
-  streamingMessageId?: string;
+  onRegenerate?: (message: Message) => void;
 }
 
 const starterPromptsByModule: Record<string, string[]> = {
@@ -44,18 +46,19 @@ function isSameDay(a: string, b: string) {
 export function ChatArea({
   messages,
   isTyping = false,
+  streamingText = "",
+  currentConversationId = null,
   selectedModule = "chat",
   onStarterClick,
-  streamingMessageId,
+  onRegenerate,
 }: ChatAreaProps) {
   const listRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
   useEffect(() => {
-    const node = listRef.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, [messages, isTyping]);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, isTyping, streamingText]);
 
   useEffect(() => {
     const node = listRef.current;
@@ -75,7 +78,7 @@ export function ChatArea({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      {messages.length === 0 ? (
+      {messages.length === 0 && !currentConversationId ? (
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-4 py-10 text-center">
           <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl gradient-brand text-3xl font-bold text-white">
             H
@@ -110,11 +113,14 @@ export function ChatArea({
                       </span>
                     </div>
                   ) : null}
-                  <MessageBubble message={message} isStreaming={streamingMessageId === message.id} />
+                  <MessageBubble
+                    message={message}
+                    onRegenerate={() => onRegenerate?.(message)}
+                  />
                 </div>
               );
             })}
-            {isTyping ? (
+            {isTyping && !streamingText ? (
               <div className="flex items-center gap-2 px-2 text-sm text-brand-text-secondary">
                 <div className="flex items-center gap-1">
                   <span className="h-2 w-2 animate-bounce rounded-full bg-brand-primary [animation-delay:-0.2s]" />
@@ -124,6 +130,25 @@ export function ChatArea({
                 <span>Humnexa is thinking...</span>
               </div>
             ) : null}
+            {streamingText ? (
+              <MessageBubble
+                isStreaming
+                message={{
+                  id: "streaming",
+                  conversation_id: currentConversationId ?? "streaming",
+                  role: "assistant",
+                  content: streamingText,
+                  mode: "auto",
+                  model: "stream",
+                  tokens_in: 0,
+                  tokens_out: 0,
+                  attachments: [],
+                  citations: [],
+                  created_at: new Date().toISOString(),
+                }}
+              />
+            ) : null}
+            <div ref={bottomRef} />
           </div>
         </div>
       )}

@@ -1,22 +1,39 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { ArrowUp, Globe, Mic, Paperclip, Square } from "lucide-react";
 import { useTheme } from "next-themes";
 import { AI_MODES } from "@/lib/constants";
 import { Button } from "@/components/ui/Button";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useChatStore } from "@/store/chat-store";
+import { useAuthStore } from "@/store/auth-store";
+import { showToast } from "@/components/ui/Toast";
 import { cn } from "@/lib/utils";
+import type { Message } from "@/types";
 
 interface ChatInputProps {
-  onSend?: (message: string, options: { modeId: string; webSearch: boolean; files: File[] }) => void;
-  onStop?: () => void;
-  isStreaming?: boolean;
+  conversationId?: string | null;
+  initialMessage?: string | null;
+  onInitialMessageConsumed?: () => void;
 }
 
-export function ChatInput({ onSend, onStop, isStreaming = false }: ChatInputProps) {
-  const { selectedMode, setSelectedMode } = useChatStore();
+export function ChatInput({ conversationId = null, initialMessage, onInitialMessageConsumed }: ChatInputProps) {
+  const pathname = usePathname();
+  const { user } = useAuthStore();
+  const {
+    currentConversationId,
+    selectedMode,
+    selectedModule,
+    isStreaming,
+    setSelectedMode,
+    setCurrentConversationId,
+    addMessage,
+    updateStreamingText,
+    setIsStreaming,
+    fetchConversations,
+  } = useChatStore();
   const { resolvedTheme } = useTheme();
   const [message, setMessage] = useState("");
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
@@ -24,6 +41,8 @@ export function ChatInput({ onSend, onStop, isStreaming = false }: ChatInputProp
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const activeConversationId = conversationId ?? currentConversationId;
 
   const displayModes = useMemo(
     () => AI_MODES.filter((mode) => ["auto", "instant", "think-quick", "research", "code", "learn"].includes(mode.id)),
@@ -39,14 +58,160 @@ export function ChatInput({ onSend, onStop, isStreaming = false }: ChatInputProp
     textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, maxHeight)}px`;
   };
 
-  const submit = () => {
+  const stopStreaming = () => {
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = null;
+    setIsStreaming(false);
+    updateStreamingText("");
+    showToast({ variant: "warning", message: "Generation stopped." });
+  };
+
+  const sendMessage = async (rawMessage: string) => {
+    const trimmed = rawMessage.trim();
+    if (!trimmed || isStreaming) return;
+    if (!user) {
+      showToast({ variant: "error", message: "Please login to send messages." });
+      return;
+    }
+
+    const optimisticMessage: Message = {
+      id: crypto.randomUUID(),
+      conversation_id: activeConversationId ?? "new",
+      role: "user",
+      content: trimmed,
+      mode: selectedMode.id,
+      model: "default",
+      tokens_in: 0,
+      tokens_out: 0,
+      attachments: [],
+      citations: [],
+      created_at: new Date().toISOString(),
+    };
+    addMessage(optimisticMessage);
+    setIsStreaming(true);
+    updateStreamingText("");
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: trimmed,
+          conversation_id: activeConversationId,
+          mode: selectedMode.id,
+          module: selectedModule.id,
+          web_search: webSearchEnabled,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || "Failed to stream response.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let aiResponse = "";
+      let buffer = "";
+      let newConversationId = activeConversationId;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine.startsWith("data: ")) continue;
+          const payload = trimmedLine.slice(6).trim();
+          if (!payload) continue;
+
+          try {
+            const data = JSON.parse(payload) as {
+              type: "conversation_id" | "content" | "done" | "error";
+              conversation_id?: string;
+              content?: string;
+              error?: string;
+            };
+
+            if (data.type === "conversation_id" && data.conversation_id) {
+              newConversationId = data.conversation_id;
+              setCurrentConversationId(newConversationId);
+              if (!conversationId && pathname === "/chat") {
+                window.history.replaceState(null, "", `/chat/${newConversationId}`);
+              }
+            } else if (data.type === "content" && data.content) {
+              aiResponse += data.content;
+              updateStreamingText(aiResponse);
+            } else if (data.type === "error") {
+              throw new Error(data.error || "AI request failed.");
+            } else if (data.type === "done") {
+              // ignored here; finalize after loop.
+            }
+          } catch {
+            // ignore malformed chunk
+          }
+        }
+      }
+
+      if (aiResponse.trim()) {
+        const assistantMessage: Message = {
+          id: crypto.randomUUID(),
+          conversation_id: newConversationId ?? activeConversationId ?? "new",
+          role: "assistant",
+          content: aiResponse,
+          mode: selectedMode.id,
+          model: "default",
+          tokens_in: 0,
+          tokens_out: 0,
+          attachments: [],
+          citations: [],
+          created_at: new Date().toISOString(),
+        };
+        addMessage(assistantMessage);
+      }
+
+      await fetchConversations();
+    } catch (error) {
+      if ((error as Error).name === "AbortError") return;
+      showToast({
+        variant: "error",
+        message: error instanceof Error ? error.message : "Failed to send message.",
+      });
+    } finally {
+      setIsStreaming(false);
+      updateStreamingText("");
+      abortRef.current = null;
+    }
+  };
+
+  const submit = async () => {
     const trimmed = message.trim();
     if (!trimmed || isStreaming) return;
-    onSend?.(trimmed, { modeId: selectedMode.id, webSearch: webSearchEnabled, files: attachments });
+    await sendMessage(trimmed);
     setMessage("");
     setAttachments([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
+
+  useEffect(() => {
+    if (!initialMessage?.trim() || isStreaming) return;
+    void sendMessage(initialMessage);
+    onInitialMessageConsumed?.();
+  }, [initialMessage, isStreaming]);
+
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
 
   return (
     <div className="border-t border-brand-border-light bg-white px-3 py-3 dark:border-brand-border-dark dark:bg-brand-bg-dark">
@@ -130,13 +295,14 @@ export function ChatInput({ onSend, onStop, isStreaming = false }: ChatInputProp
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                submit();
+                void submit();
               }
             }}
             rows={1}
             placeholder={resolvedTheme === "dark" ? "Humnexa se kuch bhi pucho..." : "Ask Humnexa anything..."}
-            className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-brand-text-secondary"
+            className="max-h-48 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-brand-text-secondary disabled:cursor-not-allowed disabled:opacity-70"
             aria-label="Chat message input"
+            disabled={isStreaming}
           />
 
           <button
@@ -163,7 +329,7 @@ export function ChatInput({ onSend, onStop, isStreaming = false }: ChatInputProp
               variant="danger"
               className="h-9 rounded-full px-3"
               leftIcon={<Square className="h-4 w-4" />}
-              onClick={onStop}
+              onClick={stopStreaming}
               aria-label="Stop generation"
             >
               Stop
@@ -171,7 +337,7 @@ export function ChatInput({ onSend, onStop, isStreaming = false }: ChatInputProp
           ) : (
             <button
               type="button"
-              onClick={submit}
+              onClick={() => void submit()}
               disabled={!message.trim()}
               className="inline-flex h-9 w-9 items-center justify-center rounded-full gradient-brand text-white transition hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Send message"

@@ -1,37 +1,44 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { ChatInput } from "@/components/chat/ChatInput";
+import { useChatStore } from "@/store/chat-store";
 
 export default function ChatHomePage() {
-  const router = useRouter();
+  const {
+    messages,
+    isStreaming,
+    streamingText,
+    selectedModule,
+    setMessages,
+    setCurrentConversationId,
+    setCurrentConversation,
+  } = useChatStore();
+  const [starterPrompt, setStarterPrompt] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCurrentConversationId(null);
+    setCurrentConversation(null);
+    setMessages([]);
+  }, [setCurrentConversation, setCurrentConversationId, setMessages]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ChatArea
-        messages={[]}
-        selectedModule="chat"
+        messages={messages}
+        isTyping={isStreaming}
+        streamingText={streamingText}
+        currentConversationId={null}
+        selectedModule={selectedModule.id}
         onStarterClick={(prompt) => {
-          const conversationId = crypto.randomUUID();
-          const query = new URLSearchParams({
-            q: prompt,
-            mode: "auto",
-            web: "0",
-          }).toString();
-          router.push(`/chat/${conversationId}?${query}`);
+          setStarterPrompt(prompt);
         }}
       />
       <ChatInput
-        onSend={(content, options) => {
-          const conversationId = crypto.randomUUID();
-          const query = new URLSearchParams({
-            q: content,
-            mode: options.modeId,
-            web: options.webSearch ? "1" : "0",
-          }).toString();
-          router.push(`/chat/${conversationId}?${query}`);
-        }}
+        conversationId={null}
+        initialMessage={starterPrompt}
+        onInitialMessageConsumed={() => setStarterPrompt(null)}
       />
     </div>
   );

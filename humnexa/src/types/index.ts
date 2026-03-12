@@ -24,6 +24,8 @@ export interface Conversation {
   message_count: number;
   last_message_at: string;
   created_at: string;
+  updated_at?: string;
+  deleted_at?: string | null;
 }
 
 export interface Message {

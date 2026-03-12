@@ -7,8 +7,8 @@ import { motion } from "framer-motion";
 import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pin, Plus, Settings } from "lucide-react";
 import { MODULES } from "@/lib/constants";
 import { iconMap } from "@/lib/icon-map";
-import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/store/auth-store";
+import { useChatStore } from "@/store/chat-store";
 import { useUIStore } from "@/store/ui-store";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
@@ -16,6 +16,9 @@ import { Button } from "@/components/ui/Button";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/utils";
+import { groupConversationsByDate, formatRelativeTime } from "@/lib/utils/index";
+import type { Conversation } from "@/types";
+import { showToast } from "@/components/ui/Toast";
 
 interface SidebarProps {
   mobileOpen?: boolean;
@@ -23,47 +26,25 @@ interface SidebarProps {
   onNewChat?: () => void;
 }
 
-interface SidebarConversation {
-  id: string;
-  title: string;
-  module: string;
-  updatedAt: string;
-  pinned?: boolean;
-}
-
-function groupConversationByTime(items: SidebarConversation[]) {
-  const now = Date.now();
-  const groups: Record<string, SidebarConversation[]> = {
-    Today: [],
-    Yesterday: [],
-    "Previous 7 Days": [],
-    Older: [],
-  };
-
-  items.forEach((item) => {
-    const diff = now - new Date(item.updatedAt).getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    if (days === 0) groups.Today.push(item);
-    else if (days === 1) groups.Yesterday.push(item);
-    else if (days <= 7) groups["Previous 7 Days"].push(item);
-    else groups.Older.push(item);
-  });
-
-  return groups;
-}
-
 export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { sidebarOpen, sidebarWidth, toggleSidebar, isMobile } = useUIStore();
   const { user } = useAuthStore();
+  const {
+    conversations,
+    fetchConversations,
+    setCurrentConversationId,
+    removeConversation,
+    upsertConversation,
+    isFetchingConversations,
+  } = useChatStore();
   const [search, setSearch] = useState("");
   const [activeModule, setActiveModule] = useState("chat");
   const [menuConversation, setMenuConversation] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
-  const [conversations, setConversations] = useState<SidebarConversation[]>([]);
-  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -77,58 +58,47 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
   }, [toggleSidebar]);
 
   useEffect(() => {
-    const closeContext = () => setContextMenu(null);
+    const closeContext = () => setMenuConversation(null);
     window.addEventListener("click", closeContext);
     return () => window.removeEventListener("click", closeContext);
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const fetchConversations = async () => {
-      setIsLoadingConversations(true);
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase
-          .from("conversations")
-          .select("id,title,module,last_message_at,is_pinned,updated_at")
-          .order("last_message_at", { ascending: false })
-          .limit(100);
-
-        if (error) throw error;
-        if (cancelled) return;
-        setConversations(
-          (data ?? []).map((row) => ({
-            id: (row.id as string | undefined) ?? crypto.randomUUID(),
-            title: ((row.title as string | undefined) ?? "Untitled conversation").trim() || "Untitled conversation",
-            module: (row.module as string | undefined) ?? "chat",
-            updatedAt:
-              (row.last_message_at as string | undefined) ??
-              (row.updated_at as string | undefined) ??
-              new Date().toISOString(),
-            pinned: Boolean(row.is_pinned),
-          })),
-        );
-      } catch {
-        if (!cancelled) setConversations([]);
-      } finally {
-        if (!cancelled) setIsLoadingConversations(false);
-      }
-    };
     void fetchConversations();
-    return () => {
-      cancelled = true;
-    };
   }, [pathname]);
 
-  const filtered = useMemo(() => {
+  const filteredConversations = useMemo(() => {
     return conversations
-      .filter((item) => item.module === activeModule)
+      .filter((item) => !item.deleted_at)
+      .filter((item) => (activeModule ? item.module === activeModule : true))
       .filter((item) => item.title.toLowerCase().includes(search.toLowerCase()))
-      .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+      .sort((a, b) => Number(Boolean(b.is_pinned)) - Number(Boolean(a.is_pinned)));
   }, [activeModule, conversations, search]);
 
-  const groups = groupConversationByTime(filtered);
+  const groups = groupConversationsByDate(filteredConversations);
   const visible = isMobile ? mobileOpen : true;
+
+  const updateConversation = async (id: string, payload: Partial<Conversation>) => {
+    const response = await fetch(`/api/chat/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error || "Failed to update conversation.");
+    }
+    const body = (await response.json()) as { conversation: Conversation };
+    upsertConversation(body.conversation);
+  };
+
+  const deleteConversation = async (id: string) => {
+    const confirmed = window.confirm("Delete this conversation?");
+    if (!confirmed) return;
+    const response = await fetch(`/api/chat/${id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("Failed to delete conversation.");
+    removeConversation(id);
+  };
 
   const sidebarBody = (
     <motion.aside
@@ -221,7 +191,7 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
-        {!isLoadingConversations && filtered.length === 0 ? (
+        {!isFetchingConversations && filteredConversations.length === 0 ? (
           <p className="px-2 py-3 text-xs text-brand-text-secondary">
             {search ? "No matching conversations." : "No conversations yet. Start a new chat."}
           </p>
@@ -238,17 +208,13 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
                   const conversationHref = item.module === "chat" ? `/chat/${item.id}` : moduleRoute;
                   const isActiveConversation = pathname === conversationHref;
                   return (
-                    <div
-                      key={item.id}
-                      className="group relative"
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        setContextMenu({ id: item.id, x: event.clientX, y: event.clientY });
-                      }}
-                    >
+                    <div key={item.id} className="group relative">
                       <button
                         type="button"
-                        onClick={() => router.push(conversationHref)}
+                        onClick={() => {
+                          setCurrentConversationId(item.id);
+                          router.push(conversationHref);
+                        }}
                         className={cn(
                           "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40",
                           isActiveConversation
@@ -259,11 +225,37 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
                         {ModuleIcon ? <ModuleIcon className="h-4 w-4 shrink-0 text-brand-text-secondary" /> : null}
                         {sidebarOpen ? (
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm text-brand-text-light dark:text-brand-text-dark">{item.title}</p>
-                            <div className="mt-0.5 flex items-center gap-1 text-xs text-brand-text-secondary">
-                              <span>{new Date(item.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                              {item.pinned ? <Pin className="h-3 w-3" /> : null}
-                            </div>
+                            {editingConversationId === item.id ? (
+                              <input
+                                value={editingTitle}
+                                onChange={(event) => setEditingTitle(event.target.value)}
+                                className="w-full rounded-md border border-brand-border-light bg-white px-2 py-1 text-sm text-brand-text-light outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:border-brand-border-dark dark:bg-brand-card-dark dark:text-brand-text-dark"
+                                onKeyDown={async (event) => {
+                                  if (event.key !== "Enter") return;
+                                  const nextTitle = editingTitle.trim();
+                                  setEditingConversationId(null);
+                                  if (!nextTitle) return;
+                                  try {
+                                    await updateConversation(item.id, { title: nextTitle });
+                                  } catch (error) {
+                                    showToast({
+                                      variant: "error",
+                                      message: error instanceof Error ? error.message : "Rename failed.",
+                                    });
+                                  }
+                                }}
+                                onBlur={() => setEditingConversationId(null)}
+                                autoFocus
+                              />
+                            ) : (
+                              <>
+                                <p className="truncate text-sm text-brand-text-light dark:text-brand-text-dark">{item.title}</p>
+                                <div className="mt-0.5 flex items-center gap-1 text-xs text-brand-text-secondary">
+                                  <span>{formatRelativeTime(item.last_message_at || item.created_at)}</span>
+                                  {item.is_pinned ? <Pin className="h-3 w-3" /> : null}
+                                </div>
+                              </>
+                            )}
                           </div>
                         ) : null}
                       </button>
@@ -279,11 +271,30 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
                       ) : null}
                       {menuConversation === item.id ? (
                         <div className="absolute right-6 top-8 z-30 w-36 rounded-md border border-brand-border-light bg-white p-1 shadow-lg dark:border-brand-border-dark dark:bg-brand-card-dark">
-                          {["Rename", "Pin", "Archive", "Delete"].map((action) => (
+                          {["Rename", item.is_pinned ? "Unpin" : "Pin", "Archive", "Delete"].map((action) => (
                             <button
                               key={action}
                               type="button"
-                              onClick={() => setMenuConversation(null)}
+                              onClick={async () => {
+                                setMenuConversation(null);
+                                try {
+                                  if (action === "Rename") {
+                                    setEditingConversationId(item.id);
+                                    setEditingTitle(item.title);
+                                  } else if (action === "Pin" || action === "Unpin") {
+                                    await updateConversation(item.id, { is_pinned: !item.is_pinned });
+                                  } else if (action === "Archive") {
+                                    await updateConversation(item.id, { is_archived: !item.is_archived });
+                                  } else if (action === "Delete") {
+                                    await deleteConversation(item.id);
+                                  }
+                                } catch (error) {
+                                  showToast({
+                                    variant: "error",
+                                    message: error instanceof Error ? error.message : "Action failed.",
+                                  });
+                                }
+                              }}
                               className={cn(
                                 "block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-brand-card-light focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:hover:bg-brand-bg-dark",
                                 action === "Delete" ? "text-error" : "text-brand-text-light dark:text-brand-text-dark",
@@ -342,27 +353,6 @@ export function Sidebar({ mobileOpen = false, onCloseMobile, onNewChat }: Sideba
       ) : (
         sidebarBody
       )}
-      {contextMenu ? (
-        <div
-          className="fixed z-[60] min-w-36 rounded-md border border-brand-border-light bg-white p-1 shadow-lg dark:border-brand-border-dark dark:bg-brand-card-dark"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          role="menu"
-        >
-          {["Rename", "Pin", "Archive", "Delete"].map((action) => (
-            <button
-              key={action}
-              type="button"
-              onClick={() => setContextMenu(null)}
-              className={cn(
-                "block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-brand-card-light focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40 dark:hover:bg-brand-bg-dark",
-                action === "Delete" ? "text-error" : "text-brand-text-light dark:text-brand-text-dark",
-              )}
-            >
-              {action}
-            </button>
-          ))}
-        </div>
-      ) : null}
     </>
   );
 }

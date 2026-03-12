@@ -51,12 +51,13 @@ export const useAuthStore = create<AuthState>((set) => ({
         phone: authUser.phone ?? null,
       };
 
-      await supabase.from("profiles").upsert(profileSeed, { onConflict: "id" }).select("id").maybeSingle();
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", authUser.id)
-        .maybeSingle();
+      await supabase.from("users").upsert(profileSeed, { onConflict: "id" }).select("id").maybeSingle();
+      let { data: profile } = await supabase.from("users").select("*").eq("id", authUser.id).maybeSingle();
+      if (!profile) {
+        await supabase.from("profiles").upsert(profileSeed, { onConflict: "id" }).select("id").maybeSingle();
+        const fallback = await supabase.from("profiles").select("*").eq("id", authUser.id).maybeSingle();
+        profile = fallback.data;
+      }
 
       const mergedUser: User = {
         id: authUser.id,

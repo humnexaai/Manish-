@@ -1,0 +1,3 @@
+-- Fallback schema file for manual execution in Supabase SQL Editor.
+-- If you maintain your main schema in humnexa-db-schema.sql,
+-- copy that content here for a single-file run target.

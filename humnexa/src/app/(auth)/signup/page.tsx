@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import type { Route } from "next";
 import { Lock, Mail, Phone, User } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -11,7 +12,6 @@ import { Input } from "@/components/ui/Input";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { showToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
-import { signInWithGoogle } from "@/lib/supabase";
 
 function getPasswordStrength(password: string) {
   let score = 0;
@@ -54,8 +54,11 @@ export default function SignupPage() {
         },
       });
       if (error) throw error;
-      showToast({ variant: "success", message: "Account created successfully." });
-      router.push("/chat");
+      showToast({
+        variant: "success",
+        message: "Signup successful. Check your email for verification link (if enabled).",
+      });
+      router.push("/chat" as Route);
       router.refresh();
     } catch (error) {
       showToast({
@@ -70,7 +73,13 @@ export default function SignupPage() {
   const continueWithGoogle = async () => {
     try {
       setIsLoading(true);
-      const { error } = await signInWithGoogle("/chat");
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/api/auth/callback`,
+        },
+      });
       if (error) throw error;
     } catch (error) {
       showToast({
