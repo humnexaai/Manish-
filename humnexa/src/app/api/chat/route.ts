@@ -4,6 +4,9 @@ import { getProvider, getModelForMode, getTemperatureForMode } from "@/lib/ai/ro
 import { getSystemPrompt } from "@/lib/ai/system-prompts";
 import type { AIMessage } from "@/lib/ai/types";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 interface ChatBody {
   message?: string;
   conversation_id?: string;
