@@ -8,7 +8,12 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const oauthError = url.searchParams.get("error");
-  const origin = url.origin;
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const publicOrigin = process.env.NEXT_PUBLIC_APP_URL;
+  const origin = forwardedHost
+    ? `${forwardedProto || "https"}://${forwardedHost}`
+    : publicOrigin || url.origin;
 
   if (oauthError || !code) {
     return NextResponse.redirect(new URL("/login?error=auth_failed", origin));
