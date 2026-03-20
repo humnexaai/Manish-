@@ -36,3 +36,13 @@ Copy `.env.example` to `.env.local`. Required variables:
 ### No automated test suite
 
 The project has no test framework (jest, vitest, etc.) configured. `npm run lint` and `npm run build` are the main code-quality checks.
+
+### Hello-world scope without secrets
+
+With placeholder env vars (no real Supabase/Groq keys), the following works end-to-end:
+
+- All public pages render: `/`, `/pricing`, `/login`, `/signup`
+- Signup form client-side validation (password strength meter, terms checkbox toast)
+- Middleware correctly redirects unauthenticated access to protected routes (e.g. `/chat` → `/login?next=%2Fchat`)
+
+Auth flows (actual signup/login) and AI chat require real `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `GROQ_API_KEY`.
