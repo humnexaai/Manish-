@@ -29,6 +29,15 @@ Single Next.js 14 application located in `/workspace/humnexa/`. Not a monorepo.
 - Required for full functionality: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `GROQ_API_KEY`
 - See `.env.example` for the full list
 
+### Without external secrets
+
+When no Supabase or Groq credentials are configured:
+- The public landing page (`/`), `/login`, `/signup`, `/pricing` all render normally
+- The `/api/inquiry` endpoint works fully (no external deps)
+- Protected routes (`/chat`, `/settings`, etc.) redirect to `/login`
+- AI chat responses will not work (Groq key required)
+- The hello-world verification for this setup is submitting the beverage inquiry form on the homepage, which exercises a client-side form + server-side API route round-trip
+
 ### Key gotchas
 
 - The `next lint` command prompts interactively if no `.eslintrc.json` exists. The repo now includes one with `{"extends":"next/core-web-vitals"}`.
